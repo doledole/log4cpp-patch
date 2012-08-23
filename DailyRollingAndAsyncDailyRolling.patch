@@ -1,0 +1,302 @@
+diff -uNr log4cpp-1.1-orig/include/log4cpp/AsyncDailyRollingAppender.hh log4cpp-1.1-dst-cp/include/log4cpp/AsyncDailyRollingAppender.hh
+--- log4cpp-1.1-orig/include/log4cpp/AsyncDailyRollingAppender.hh	1970-01-01 08:00:00.000000000 +0800
++++ log4cpp-1.1-dst-cp/include/log4cpp/AsyncDailyRollingAppender.hh	2012-08-23 13:46:19.000000000 +0800
+@@ -0,0 +1,39 @@
++/**
++ * A Daily Rolling Appender extention for log4cpp
++ * 
++ * @author Laidongmin(ldmggh@163.com)
++ *
++ */
++#ifndef __ASYNC_DAILY_ROLLING_APPENDER_H__
++#define __ASYNC_DAILY_ROLLING_APPENDER_H__
++
++#include <log4cpp/RollingFileAppender.hh>
++#include <log4cpp/Portability.hh>
++#include <string>
++#include <pthread.h>
++#include <queue>
++
++using namespace log4cpp;
++
++namespace log4cpp{
++	class LOG4CPP_EXPORT AsyncDailyRollingFileAppender : public FileAppender{
++		public:
++			AsyncDailyRollingFileAppender(const std::string& name, const std::string& fileName, bool append = true, mode_t mode = 00664);
++			
++			virtual void rollOver();
++
++		protected:
++			virtual void _append(const LoggingEvent& event);
++			virtual short getCurrTime();
++			virtual std::string getFileName();
++			
++		private:
++			static void* run(void *data);
++
++			short lastTime_; //by day
++			std::queue<std::string> _queue;
++			pthread_mutex_t _locker;
++	};
++}
++
++#endif
+diff -uNr log4cpp-1.1-orig/include/log4cpp/DailyRollingAppender.hh log4cpp-1.1-dst-cp/include/log4cpp/DailyRollingAppender.hh
+--- log4cpp-1.1-orig/include/log4cpp/DailyRollingAppender.hh	1970-01-01 08:00:00.000000000 +0800
++++ log4cpp-1.1-dst-cp/include/log4cpp/DailyRollingAppender.hh	2012-08-23 13:46:19.000000000 +0800
+@@ -0,0 +1,35 @@
++/**
++ * A Daily Rolling Appender extention for log4cpp
++ * 
++ * @author Chen Ju(sammy105@gmail.com)
++ *
++ */
++#ifndef __DAILY_ROLLING_APPENDER_H__
++#define __DAILY_ROLLING_APPENDER_H__
++#include <log4cpp/RollingFileAppender.hh>
++#include <string>
++#include <log4cpp/Portability.hh>
++using namespace log4cpp;
++namespace log4cpp{
++	class LOG4CPP_EXPORT DailyRollingFileAppender : public FileAppender{
++		public:
++			DailyRollingFileAppender(const std::string& name, const std::string& fileName, bool append = true, mode_t mode = 00664);
++			
++			virtual void rollOver();
++
++		protected:
++			virtual void _append(const LoggingEvent& event);
++			virtual short getCurrTime();
++			virtual std::string getFileName();
++			
++		private:
++			short lastTime_; //by day
++		
++	};
++}
++
++
++
++
++
++#endif
+diff -uNr log4cpp-1.1-orig/include/log4cpp/FileAppender.hh log4cpp-1.1-dst-cp/include/log4cpp/FileAppender.hh
+--- log4cpp-1.1-orig/include/log4cpp/FileAppender.hh	2012-08-23 13:40:55.000000000 +0800
++++ log4cpp-1.1-dst-cp/include/log4cpp/FileAppender.hh	2012-08-23 13:46:19.000000000 +0800
+@@ -81,6 +81,7 @@
+ 
+         protected:
+         virtual void _append(const LoggingEvent& event);
++        virtual void _append(const std::string& message);
+ 
+         const std::string _fileName;
+         int _fd;
+diff -uNr log4cpp-1.1-orig/include/log4cpp/Makefile.am log4cpp-1.1-dst-cp/include/log4cpp/Makefile.am
+--- log4cpp-1.1-orig/include/log4cpp/Makefile.am	2012-08-23 13:40:55.000000000 +0800
++++ log4cpp-1.1-dst-cp/include/log4cpp/Makefile.am	2012-08-23 13:46:19.000000000 +0800
+@@ -2,6 +2,8 @@
+ 
+ liblog4cppincludedir = $(includedir)/log4cpp
+ liblog4cppinclude_HEADERS =  \
++	AsyncDailyRollingAppender.hh \
++	DailyRollingAppender.hh \
+ 	Appender.hh \
+ 	AppenderSkeleton.hh \
+ 	AppendersFactory.hh \
+diff -uNr log4cpp-1.1-orig/src/AsyncDailyRollingFileAppender.cpp log4cpp-1.1-dst-cp/src/AsyncDailyRollingFileAppender.cpp
+--- log4cpp-1.1-orig/src/AsyncDailyRollingFileAppender.cpp	1970-01-01 08:00:00.000000000 +0800
++++ log4cpp-1.1-dst-cp/src/AsyncDailyRollingFileAppender.cpp	2012-08-23 13:54:29.000000000 +0800
+@@ -0,0 +1,88 @@
++#include <log4cpp/AsyncDailyRollingAppender.hh>
++#include <sstream>
++#include <time.h>
++#include <iostream>
++#include <stdlib.h>
++#include <unistd.h>
++
++using namespace log4cpp;
++using namespace std;
++
++void* AsyncDailyRollingFileAppender::run(void *data)
++{
++	AsyncDailyRollingFileAppender *appender = (AsyncDailyRollingFileAppender*)data;
++
++	std::string message;
++	std::cout << "AsyncDailyRollingFileAppender::run 1\n";
++
++	while(true) {
++		if(appender->_queue.empty() == true) {
++			usleep(20000);
++			continue;
++		}
++
++		pthread_mutex_lock(&appender->_locker);
++		message = appender->_queue.front();
++		appender->_queue.pop();
++		pthread_mutex_unlock(&appender->_locker);
++
++		appender->FileAppender::_append(message);
++	}
++
++	return NULL;
++}
++
++AsyncDailyRollingFileAppender::AsyncDailyRollingFileAppender(const std::string& name, const std::string& fileName, bool append, mode_t mode):
++	FileAppender(name, fileName, append, mode), lastTime_(-1)
++{
++	pthread_mutex_init(&_locker, NULL);
++	rollOver(); //make new file
++	//::remove(fileName.c_str()); //remove the file created by FileAppend
++	
++	pthread_t id;
++	if(pthread_create(&id, NULL, AsyncDailyRollingFileAppender::run, this) != 0) {
++		std::cerr << "AsyncDailyRollingFileAppender pthread_create fail\n";
++		exit(0);
++	}
++}
++	
++void AsyncDailyRollingFileAppender::rollOver(){
++	::close(_fd); //close current fd
++	_fd = ::open(getFileName().c_str(), _flags, 00644);
++}
++
++std::string AsyncDailyRollingFileAppender::getFileName(){
++	std::string fileName;
++	time_t currTime;
++	time(&currTime);
++	tm currTm;
++	localtime_r(&currTime, &currTm);
++	stringstream ss;
++	ss << _fileName <<"-"<< 1900 + currTm.tm_year <<  "-" << currTm.tm_mon + 1 << "-" <<currTm.tm_mday;
++	fileName = ss.str();
++	return fileName;
++}
++
++short AsyncDailyRollingFileAppender::getCurrTime(){
++	time_t currTime;
++	time(&currTime);
++	tm currTm;
++	localtime_r(&currTime, &currTm);
++	return currTm.tm_mday;
++}
++	
++void AsyncDailyRollingFileAppender::_append(const LoggingEvent& event){
++	
++	short currTime = getCurrTime();
++	if(currTime != lastTime_){
++		rollOver();
++		lastTime_ = currTime;
++	}
++
++	pthread_mutex_lock(&_locker);
++	_queue.push(_getLayout().format(event));
++	pthread_mutex_unlock(&_locker);
++
++//	this->FileAppender::_append(_getLayout().format(event));
++//	this->FileAppender::_append(event); //call parent method
++}
+diff -uNr log4cpp-1.1-orig/src/DailyRollingFileAppender.cpp log4cpp-1.1-dst-cp/src/DailyRollingFileAppender.cpp
+--- log4cpp-1.1-orig/src/DailyRollingFileAppender.cpp	1970-01-01 08:00:00.000000000 +0800
++++ log4cpp-1.1-dst-cp/src/DailyRollingFileAppender.cpp	2012-08-23 13:46:19.000000000 +0800
+@@ -0,0 +1,46 @@
++#include <log4cpp/DailyRollingAppender.hh>
++#include <sstream>
++#include <time.h>
++using namespace log4cpp;
++using namespace std;
++DailyRollingFileAppender::DailyRollingFileAppender(const std::string& name, const std::string& fileName, bool append, mode_t mode):
++	FileAppender(name, fileName, append, mode), lastTime_(-1)
++{
++		rollOver(); //make new file
++		//::remove(fileName.c_str()); //remove the file created by FileAppend
++}
++	
++void DailyRollingFileAppender::rollOver(){
++	::close(_fd); //close current fd
++	_fd = ::open(getFileName().c_str(), _flags, 00644);
++}
++
++std::string DailyRollingFileAppender::getFileName(){
++	std::string fileName;
++	time_t currTime;
++	time(&currTime);
++	tm currTm;
++	localtime_r(&currTime, &currTm);
++	stringstream ss;
++	ss << _fileName <<"-"<< 1900 + currTm.tm_year <<  "-" << currTm.tm_mon + 1 << "-" <<currTm.tm_mday;
++	fileName = ss.str();
++	return fileName;
++}
++
++short DailyRollingFileAppender::getCurrTime(){
++	time_t currTime;
++	time(&currTime);
++	tm currTm;
++	localtime_r(&currTime, &currTm);
++	return currTm.tm_mday;
++}
++	
++void DailyRollingFileAppender::_append(const LoggingEvent& event){
++	
++	short currTime = getCurrTime();
++	if(currTime != lastTime_){
++		rollOver();
++		lastTime_ = currTime;
++	}
++	this->FileAppender::_append(event); //call parent method
++}
+diff -uNr log4cpp-1.1-orig/src/FileAppender.cpp log4cpp-1.1-dst-cp/src/FileAppender.cpp
+--- log4cpp-1.1-orig/src/FileAppender.cpp	2012-08-23 13:40:55.000000000 +0800
++++ log4cpp-1.1-dst-cp/src/FileAppender.cpp	2012-08-23 13:46:19.000000000 +0800
+@@ -83,6 +83,12 @@
+         }
+     }
+ 
++	void FileAppender::_append(const std::string& message) {
++		if (!::write(_fd, message.data(), message.length())) {
++
++		}
++	}
++
+     bool FileAppender::reopen() {
+         if (_fileName != "") {
+             int fd = ::open(_fileName.c_str(), _flags, _mode);
+diff -uNr log4cpp-1.1-orig/src/Makefile.am log4cpp-1.1-dst-cp/src/Makefile.am
+--- log4cpp-1.1-orig/src/Makefile.am	2012-08-23 13:40:55.000000000 +0800
++++ log4cpp-1.1-dst-cp/src/Makefile.am	2012-08-23 13:46:19.000000000 +0800
+@@ -5,6 +5,8 @@
+ noinst_HEADERS = snprintf.c Localtime.hh
+ 
+ liblog4cpp_la_SOURCES = \
++	AsyncDailyRollingFileAppender.cpp \
++	DailyRollingFileAppender.cpp \
+ 	Appender.cpp \
+ 	AppenderSkeleton.cpp \
+ 	AppendersFactory.cpp \
+diff -uNr log4cpp-1.1-orig/src/PropertyConfiguratorImpl.cpp log4cpp-1.1-dst-cp/src/PropertyConfiguratorImpl.cpp
+--- log4cpp-1.1-orig/src/PropertyConfiguratorImpl.cpp	2012-08-23 13:40:55.000000000 +0800
++++ log4cpp-1.1-dst-cp/src/PropertyConfiguratorImpl.cpp	2012-08-23 13:46:19.000000000 +0800
+@@ -25,6 +25,8 @@
+ #include <log4cpp/OstreamAppender.hh>
+ #include <log4cpp/FileAppender.hh>
+ #include <log4cpp/RollingFileAppender.hh>
++#include <log4cpp/DailyRollingAppender.hh>
++#include <log4cpp/AsyncDailyRollingAppender.hh>
+ #include <log4cpp/AbortAppender.hh>
+ #ifdef WIN32
+ #include <log4cpp/Win32DebugAppender.hh>
+@@ -213,6 +215,14 @@
+             bool append = _properties.getBool(appenderPrefix + ".append", true);
+             appender = new RollingFileAppender(appenderName, fileName, maxFileSize, maxBackupIndex,
+                 append);
++        }else if(appenderType == "DailyRollingFileAppender"){
++			std::string fileName = _properties.getString(appenderPrefix + ".fileName", "foobar");
++			bool append = _properties.getBool(appenderPrefix + ".apeend", true);
++			appender = new 	DailyRollingFileAppender(appenderName, fileName, append, 00644);
++		} else if(appenderType == "AsyncDailyRollingFileAppender"){
++			std::string fileName = _properties.getString(appenderPrefix + ".fileName", "foobar");
++			bool append = _properties.getBool(appenderPrefix + ".apeend", true);
++			appender = new AsyncDailyRollingFileAppender(appenderName, fileName, append, 00644);
+         }
+         else if (appenderType == "SyslogAppender") {
+             std::string syslogName = _properties.getString(appenderPrefix + ".syslogName", "syslog");
